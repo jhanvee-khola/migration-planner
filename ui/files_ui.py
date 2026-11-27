@@ -1013,7 +1013,19 @@ class FileMigrationEstimatorTool(MigrationEstimatorTool):
       if "creatorCountReport" in file_metrics:
         try:
           from util.creator_counts import write_creator_report
-          creator_path = write_creator_report(output_dir, file_metrics["creatorCountReport"])
+          creator_report = file_metrics["creatorCountReport"]
+          coverage = creator_report["coverage"]
+          prefix = "[WARNING] " if coverage["status"] == "partial" else ""
+          self.log_msg(
+              f"{prefix}Creator counts: {coverage['status']}; "
+              f"drives completed {coverage['completed_drives']:,}/{coverage['discovered_drives']:,}; "
+              f"observed items {coverage['observed_items']:,}; "
+              f"items with user GUIDs {coverage['items_with_user_guid']:,} "
+              "(tenant membership not verified)."
+          )
+          if coverage["status"] == "partial":
+            self.log_msg("[WARNING] Creator counts are incomplete; do not treat them as tenant-wide totals.")
+          creator_path = write_creator_report(output_dir, creator_report)
           self.log_msg(f"Creator count report exported to: {creator_path}")
         except Exception as e:
           self.log_msg(f"[WARNING] Could not export creator count report: {e}")

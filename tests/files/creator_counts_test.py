@@ -59,7 +59,19 @@ class CreatorCountsTest(unittest.TestCase):
             path = write_creator_report(directory, report)
             with path.open() as f:
                 self.assertEqual(list(csv.DictReader(f)), [])
-            self.assertTrue((Path(directory) / 'creator_counts_coverage.json').exists())
+            self.assertEqual({p.name for p in Path(directory).iterdir()}, {'creator_counts.csv'})
+
+    def test_nonempty_report_csv_only(self):
+        report = creator_report(Counter({('user', A, 'file'): 2,
+                                         ('user', A, 'folder'): 1}), 2, 1, True)
+        with tempfile.TemporaryDirectory() as directory:
+            path = write_creator_report(directory, report)
+            with path.open() as f:
+                rows = list(csv.DictReader(f))
+            self.assertEqual(rows, [{'Creator Type': 'user', 'Creator ID': A,
+                                     'Files Created': '2', 'Folders Created': '1',
+                                     'Total Items Created': '3'}])
+            self.assertEqual({p.name for p in Path(directory).iterdir()}, {'creator_counts.csv'})
 
 
 class DeltaIntegrationTest(unittest.TestCase):

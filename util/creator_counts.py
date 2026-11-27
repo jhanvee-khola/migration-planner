@@ -1,6 +1,5 @@
 """Creator attribution for live file and folder observations during deep scan."""
 import csv
-import json
 from pathlib import Path
 from uuid import UUID
 from functools import lru_cache
@@ -73,8 +72,6 @@ def write_creator_report(output_dir, report):
         writer = csv.DictWriter(f, fieldnames=COLUMNS)
         writer.writeheader()
         writer.writerows(report['rows'])
-    with (directory / 'creator_counts_coverage.json').open('w', encoding='utf-8') as f:
-        json.dump(report['coverage'], f, indent=2)
     return path
 
 

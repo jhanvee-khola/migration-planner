@@ -263,7 +263,7 @@ Click **"Show Advanced Settings"** to tune the performance:
 #### 1. Connect & Source Selection
 *   **Connect with Microsoft**: Enter your Tenant ID, Client ID, and Client Secret.
 *   **User Source**:
-    *   **Scan All Sites**: Scans all Personal (OneDrive) and/or SharePoint sites in the tenant. With **Shallow Scan** switched OFF, also generates creator count reports for the selected site types.
+    *   **Scan All Sites**: Scans all Personal (OneDrive) and/or SharePoint sites in the tenant. With **Shallow Scan** switched OFF, also generates a creator count report for the selected site types.
     *   **Upload CSV**: Supports two workflows:
         1. **Targeted Entity Scan (`Entity` CSV)**: Scan a specific subset of OneDrive users (`user@domain.com`) and/or SharePoint site collection URLs (`https://...`). Only one column named `Entity` is required:
            ```csv
@@ -436,11 +436,10 @@ Once the scan completes, artifacts are saved under `/outputs/<timestamp>/` and c
 2.  **Suggested Batch Files (`suggested_batches/`)**: Individual batch CSV files (`Batch1.csv`, `Batch2.csv`, etc.) ready for migration planning.
 3.  **Sites for Deep Scan (`suggested_batches/DeepScanRecommended.csv`)** *(Shallow Scan, when entities >500k items are detected)*: A ready-to-upload `Entity` CSV containing the URLs of sites that exceeded the 500k item threshold so you can run a targeted Deep Scan on them.
 4.  **Creator Counts (`creator_counts.csv`)** *(Scan All Sites — Deep Scan only)*: Per-creator file, folder and combined item counts.
-5.  **Creator Count Coverage (`creator_counts_coverage.json`)** *(Scan All Sites — Deep Scan only)*: Scan coverage, observed-item totals and attribution status.
 
 #### Creator count reports (Scan All Sites — Deep Scan)
 
-The two creator reports are saved automatically in `/outputs/<timestamp>/` alongside the site report when report generation is reached. They are separate from the existing site report and the UI's consolidated **Export full report** CSV. They do not affect ETA or batch calculations.
+The creator count report is saved automatically in `/outputs/<timestamp>/` alongside the site report when report generation is reached. It is separate from the existing site report and the UI's consolidated **Export full report** CSV. It does not affect ETA or batch calculations.
 
 `creator_counts.csv` contains the following columns (illustrative counts):
 
@@ -453,9 +452,9 @@ The two creator reports are saved automatically in `/outputs/<timestamp>/` along
 
 *   **Attribution**: Uses the creator GUID recorded in Microsoft Graph's `createdBy` metadata, rather than the site or drive owner. Counts are grouped across the selected site types. Application identities, unresolved user identities, other identity types and unknown creators are reported separately. User email addresses and tenant membership are not verified; users with missing or non-GUID IDs cannot be individually attributed.
 *   **Count scope**: Counts first-observed live, non-root drive items with file or folder facets, using the existing delta deduplication and facet precedence. Deleted items, historical versions, recycle-bin contents, standalone shortcuts and non-document-library list items are not counted. This is not an audit of all items ever created or a transactionally consistent tenant snapshot.
-*   **Coverage**: Review `creator_counts_coverage.json` before using the counts. It reports discovered and completed drive counts, observed items, items with user GUIDs, and either `partial` or `completed_no_recorded_failures`. A completed status does not guarantee discovery of inaccessible sites or full creator attribution. A failed or cancelled scan may not reach report generation. Do not treat partial counts as exact tenant-wide totals.
+*   **Coverage**: Review the existing scan log for creator attribution totals, discovered and completed drive counts, and incomplete coverage warnings. A completed scan does not guarantee discovery of inaccessible sites or full creator attribution. A failed or cancelled scan may not reach report generation. Do not treat partial counts as exact tenant-wide totals.
 *   **Performance and permissions**: Creator metadata is requested in the existing delta API projection, with no additional directory permissions or API calls. Payload size and local parsing time may increase. The existing site report format, shallow scans and targeted scans remain unchanged.
-*   **Security**: Creator GUIDs are identity metadata; store and share these local reports according to your organization's data handling policies.
+*   **Security**: Creator GUIDs are identity metadata; store and share this local report according to your organization's data handling policies.
 
 Execution logs are written live to `/logs/files_<timestamp>.log`, with each line flushed to disk as soon as it's logged, so the log survives crashes and force-quits. A new log file is created each time **Start scan** is clicked. The log contains detailed execution steps, phase runtimes, system resource metrics (CPU/RAM), API errors, and full tracebacks of any unhandled exceptions.
 
