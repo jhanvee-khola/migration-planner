@@ -13,7 +13,7 @@ from util.utils import ScanConfig, Bucket, FileSizeDistribution, LargeResource, 
 from util.enums import FailureType, ResourceType
 from util.thread_safe_ds import ThreadSafeMap, ThreadSafeSortedSet, AtomicInt
 from util import file_encryption_detector
-from util.creator_counts import creator_key, creator_report, creator_counts_enabled, is_terminal_page
+from util.creator_counts import creator_key, creator_report, creator_counts_enabled, is_terminal_page, resolve_creator_emails
 from util.constants import ENCRYPTED_FILE_ETA_MULTIPLIER
 
 import traceback
@@ -357,11 +357,16 @@ class FileEstimator(Estimator):
             metrics["siteClassification"] = {siteId: "personal" if self._is_subsite_personal(siteId) else "teams" for siteId in metrics["siteMetrics"].keys()}
             if creator_totals is not None:
                 expected_drives = {drive["id"] for drive in drives}
+                emails = resolve_creator_emails(
+                    creator_totals, self._fetch_creator_directory_page,
+                    self.is_hard_stop_requested, self.logger,
+                )
                 metrics["creatorCountReport"] = creator_report(
                     creator_totals, len(expected_drives),
                     len(completed_creator_drives),
                     bool(failures or failed or self.is_hard_stop_requested()
                          or expected_drives != completed_creator_drives),
+                    emails,
                 )
             return metrics
             
@@ -782,6 +787,39 @@ class FileEstimator(Estimator):
 
         except Exception as e:
             self._log_and_fail("Error in _get_subsites_in_site", e, failures)
+
+    def _fetch_creator_directory_page(self, url):
+        """Best-effort roster page, using existing authentication and session.
+
+        Bound time spent retrying directory reads so creator resolution cannot
+        block a completed scan indefinitely on throttling or access errors.
+        """
+        manager = self.url_invoker.token_manager
+        for attempt in range(3):
+            if self.is_hard_stop_requested():
+                raise RuntimeError("Scan stopped")
+            token_data = manager.get_valid_token_slot(self.logger)
+            try:
+                response = manager.get_session().get(
+                    url, headers={"Authorization": f"Bearer {token_data['token']}"},
+                    timeout=30,
+                )
+                status = response.status_code
+                if status == 200:
+                    return response.json()
+                if status not in (429, 500, 502, 503, 504) or attempt == 2:
+                    raise RuntimeError(f"Directory request failed: HTTP {status}")
+                try:
+                    delay = min(10, max(0, int(response.headers.get("Retry-After", 2 ** attempt))))
+                except (ValueError, TypeError):
+                    delay = 2 ** attempt
+            finally:
+                manager.return_token_slot(token_data)
+            if self.stop_event is not None:
+                if self.stop_event.wait(delay):
+                    raise RuntimeError("Scan stopped")
+            else:
+                time.sleep(delay)
 
     def _get_top_level_sites(
         self,

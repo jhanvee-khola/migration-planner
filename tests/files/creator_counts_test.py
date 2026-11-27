@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from estimators.file_estimator import FileEstimator
-from util.creator_counts import creator_key, creator_report, creator_counts_enabled, write_creator_report, is_terminal_page
+from util.creator_counts import creator_key, creator_report, creator_counts_enabled, write_creator_report, is_terminal_page, resolve_creator_emails, USERS_URL
 from util.utils import ScanConfig
 from util.thread_safe_ds import ThreadSafeMap
 
@@ -40,11 +40,13 @@ class CreatorCountsTest(unittest.TestCase):
     def test_merge_and_coverage(self):
         first = Counter({('user', A, 'file'): 3, ('unknown', '', 'folder'): 1})
         first.update(Counter({('user', A, 'folder'): 2, ('user', B, 'file'): 1}))
-        report = creator_report(first, 2, 1, True)
+        report = creator_report(first, 2, 1, True, {A: 'a@example.com', B: 'b@example.com'})
         self.assertEqual(report['rows'][0]['Total Items Created'], 5)
         self.assertEqual(report['coverage']['observed_items'], 7)
         self.assertEqual(report['coverage']['items_with_user_guid'], 6)
         self.assertEqual(report['coverage']['status'], 'partial')
+        self.assertEqual(report['coverage']['items_with_user_email'], 6)
+        self.assertEqual(report['coverage']['unreported_items'], 1)
 
     def test_terminal_page(self):
         self.assertTrue(is_terminal_page({'status': 200, 'body': {'value': []}}))
@@ -56,22 +58,70 @@ class CreatorCountsTest(unittest.TestCase):
     def test_empty_report(self):
         report = creator_report(Counter(), 0, 0, False)
         with tempfile.TemporaryDirectory() as directory:
-            path = write_creator_report(directory, report)
+            path = write_creator_report(directory, report, '20261127_123456')
             with path.open() as f:
                 self.assertEqual(list(csv.DictReader(f)), [])
-            self.assertEqual({p.name for p in Path(directory).iterdir()}, {'creator_counts.csv'})
+            self.assertEqual({p.name for p in Path(directory).iterdir()}, {'creator_counts_20261127_123456.csv'})
 
     def test_nonempty_report_csv_only(self):
         report = creator_report(Counter({('user', A, 'file'): 2,
-                                         ('user', A, 'folder'): 1}), 2, 1, True)
+                                         ('user', A, 'folder'): 1}), 2, 1, True, {A: 'a@example.com'})
         with tempfile.TemporaryDirectory() as directory:
-            path = write_creator_report(directory, report)
+            path = write_creator_report(directory, report, '20261127_123456')
             with path.open() as f:
                 rows = list(csv.DictReader(f))
-            self.assertEqual(rows, [{'Creator Type': 'user', 'Creator ID': A,
+            self.assertEqual(rows, [{'User Email': 'a@example.com',
                                      'Files Created': '2', 'Folders Created': '1',
                                      'Total Items Created': '3'}])
-            self.assertEqual({p.name for p in Path(directory).iterdir()}, {'creator_counts.csv'})
+            self.assertEqual({p.name for p in Path(directory).iterdir()}, {'creator_counts_20261127_123456.csv'})
+
+    def test_resolve_emails_paginated_and_stop_early(self):
+        counts = Counter({('user', A, 'file'): 10, ('user', B, 'folder'): 2})
+        next_url = 'https://graph.microsoft.com/v1.0/users?$skiptoken=1'
+        fetch = MagicMock(side_effect=[
+            {'value': [{'id': A, 'mail': 'A@Example.com', 'userPrincipalName': 'other@example.com'}],
+             '@odata.nextLink': next_url},
+            {'value': [{'id': B, 'mail': None, 'userPrincipalName': 'B@example.com'}],
+             '@odata.nextLink': 'https://graph.microsoft.com/v1.0/users?$skiptoken=2'},
+        ])
+        self.assertEqual(resolve_creator_emails(counts, fetch, lambda: False, MagicMock()),
+                         {A: 'a@example.com', B: 'b@example.com'})
+        self.assertEqual([call.args[0] for call in fetch.call_args_list], [USERS_URL, next_url])
+
+    def test_unresolved_and_non_user_items_excluded_from_csv(self):
+        counts = Counter({('user', A, 'file'): 10, ('user', B, 'folder'): 2,
+                          ('application', A, 'file'): 3, ('unknown', '', 'file'): 4})
+        fetch = MagicMock(return_value={'value': [
+            {'id': A, 'mail': 'a@example.com'},
+            {'id': B, 'mail': None, 'userPrincipalName': 'guest#EXT#@tenant.example.com'},
+        ]})
+        emails = resolve_creator_emails(counts, fetch, lambda: False, MagicMock())
+        report = creator_report(counts, 1, 1, False, emails)
+        self.assertEqual(report['rows'], [{'User Email': 'a@example.com', 'Files Created': 10,
+                                           'Folders Created': 0, 'Total Items Created': 10}])
+        self.assertEqual(report['coverage']['unreported_items'], 9)
+        self.assertEqual(report['coverage']['unresolved_user_items'], 2)
+        self.assertEqual(report['coverage']['non_directory_user_items'], 7)
+
+    def test_directory_failure_does_not_raise_and_preserves_partial_results(self):
+        counts = Counter({('user', A, 'file'): 1, ('user', B, 'folder'): 2})
+        fetch = MagicMock(side_effect=[
+            {'value': [{'id': A, 'mail': 'a@example.com'}],
+             '@odata.nextLink': 'https://graph.microsoft.com/v1.0/users?$skiptoken=1'},
+            RuntimeError('Forbidden'),
+        ])
+        logger = MagicMock()
+        self.assertEqual(resolve_creator_emails(counts, fetch, lambda: False, logger),
+                         {A: 'a@example.com'})
+        logger.assert_called_once()
+
+    def test_no_directory_request_without_users_or_after_stop(self):
+        fetch = MagicMock()
+        self.assertEqual(resolve_creator_emails(Counter({('unknown', '', 'file'): 1}),
+                                                fetch, lambda: False, MagicMock()), {})
+        self.assertEqual(resolve_creator_emails(Counter({('user', A, 'file'): 1}),
+                                                fetch, lambda: True, MagicMock()), {})
+        fetch.assert_not_called()
 
 
 class DeltaIntegrationTest(unittest.TestCase):

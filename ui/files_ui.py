@@ -1020,12 +1020,18 @@ class FileMigrationEstimatorTool(MigrationEstimatorTool):
               f"{prefix}Creator counts: {coverage['status']}; "
               f"drives completed {coverage['completed_drives']:,}/{coverage['discovered_drives']:,}; "
               f"observed items {coverage['observed_items']:,}; "
-              f"items with user GUIDs {coverage['items_with_user_guid']:,} "
-              "(tenant membership not verified)."
+              f"items with user GUIDs {coverage['items_with_user_guid']:,}; "
+              f"items with resolved user emails {coverage['items_with_user_email']:,}."
           )
+          if coverage["unreported_items"]:
+            self.log_msg(
+                f"[WARNING] {coverage['unreported_items']:,} items omitted from the creator CSV: "
+                f"{coverage['unresolved_user_items']:,} with unresolved user emails; "
+                f"{coverage['non_directory_user_items']:,} without directory user IDs."
+            )
           if coverage["status"] == "partial":
             self.log_msg("[WARNING] Creator counts are incomplete; do not treat them as tenant-wide totals.")
-          creator_path = write_creator_report(output_dir, creator_report)
+          creator_path = write_creator_report(output_dir, creator_report, ts)
           self.log_msg(f"Creator count report exported to: {creator_path}")
         except Exception as e:
           self.log_msg(f"[WARNING] Could not export creator count report: {e}")

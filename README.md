@@ -4,7 +4,7 @@
 
 ## What's new
 
-- **Creator Counts (Scan All Sites — Deep Scan)**: Automatically generates a separate per-creator breakdown of observed files and folders across the selected OneDrive and SharePoint site types, without additional Microsoft Graph requests or directory permissions. See [Creator count reports](#creator-count-reports-scan-all-sites--deep-scan).
+- **Creator Counts (Scan All Sites — Deep Scan)**: Automatically generates a user-wise breakdown of observed files and folders across the selected OneDrive and SharePoint site types, using existing item enumeration and a paginated directory lookup to resolve creator emails.
 
 - **Files Shallow Scan (Default Mode for OneDrive & SharePoint)**:
   - **Fast Tenant-Scale Assessment**: **Shallow Scan** is now enabled by default in the Files Planner, rapidly collecting folder counts, file counts, Document Library counts, and active corpus sizes across OneDrive and SharePoint without traversing full folder trees.
@@ -61,7 +61,6 @@
 - [Outputs & Artifacts](#outputs--artifacts)
   - [Workflow A: Exchange Online Planner](#workflow-a-outputs-exchange-online-planner)
   - [Workflow B: Microsoft Files (OneDrive + SharePoint) Planner](#workflow-b-outputs-microsoft-onedrive--sharepoint)
-    - [Creator count reports (Scan All Sites — Deep Scan)](#creator-count-reports-scan-all-sites--deep-scan)
   - [Workflow C: Microsoft Teams & Chat Planner](#workflow-c-outputs-microsoft-teams--chat-planner)
 - [Terms & Disclaimer](#terms--disclaimer)
 
@@ -435,26 +434,7 @@ Once the scan completes, artifacts are saved under `/outputs/<timestamp>/` and c
 1.  **Site Report (`site_report_<timestamp>.csv`)**: Site-by-site breakdown of subsites, Document Libraries (`DL Count` and `Failed DL Count` in Shallow Scan), lists, folders, files, corpus size, threshold count (`>500k`), and `Suggested Batch`.
 2.  **Suggested Batch Files (`suggested_batches/`)**: Individual batch CSV files (`Batch1.csv`, `Batch2.csv`, etc.) ready for migration planning.
 3.  **Sites for Deep Scan (`suggested_batches/DeepScanRecommended.csv`)** *(Shallow Scan, when entities >500k items are detected)*: A ready-to-upload `Entity` CSV containing the URLs of sites that exceeded the 500k item threshold so you can run a targeted Deep Scan on them.
-4.  **Creator Counts (`creator_counts.csv`)** *(Scan All Sites — Deep Scan only)*: Per-creator file, folder and combined item counts.
-
-#### Creator count reports (Scan All Sites — Deep Scan)
-
-The creator count report is saved automatically in `/outputs/<timestamp>/` alongside the site report when report generation is reached. It is separate from the existing site report and the UI's consolidated **Export full report** CSV. It does not affect ETA or batch calculations.
-
-`creator_counts.csv` contains the following columns (illustrative counts):
-
-| Creator Type | Creator ID | Files Created | Folders Created | Total Items Created |
-| --- | --- | ---: | ---: | ---: |
-| user | aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa | 95000 | 5000 | 100000 |
-| user | bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb | 185000 | 15000 | 200000 |
-| unresolved_user | | 12 | 3 | 15 |
-| unknown | | 5 | 1 | 6 |
-
-*   **Attribution**: Uses the creator GUID recorded in Microsoft Graph's `createdBy` metadata, rather than the site or drive owner. Counts are grouped across the selected site types. Application identities, unresolved user identities, other identity types and unknown creators are reported separately. User email addresses and tenant membership are not verified; users with missing or non-GUID IDs cannot be individually attributed.
-*   **Count scope**: Counts first-observed live, non-root drive items with file or folder facets, using the existing delta deduplication and facet precedence. Deleted items, historical versions, recycle-bin contents, standalone shortcuts and non-document-library list items are not counted. This is not an audit of all items ever created or a transactionally consistent tenant snapshot.
-*   **Coverage**: Review the existing scan log for creator attribution totals, discovered and completed drive counts, and incomplete coverage warnings. A completed scan does not guarantee discovery of inaccessible sites or full creator attribution. A failed or cancelled scan may not reach report generation. Do not treat partial counts as exact tenant-wide totals.
-*   **Performance and permissions**: Creator metadata is requested in the existing delta API projection, with no additional directory permissions or API calls. Payload size and local parsing time may increase. The existing site report format, shallow scans and targeted scans remain unchanged.
-*   **Security**: Creator GUIDs are identity metadata; store and share this local report according to your organization's data handling policies.
+4.  **Creator Counts (`creator_counts_<timestamp>.csv`)** *(Scan All Sites — Deep Scan only)*: User email, file count, folder count and total item count across the selected site types. Uses the documented `User.Read.All` permission to resolve emails (mail, or email-form sign-in name if mail is unavailable). Only items with resolved user emails appear in the CSV; unresolved or non-user items and incomplete scan coverage are logged. Counts reflect observed existing files and folders, not historical creation activity. This separate local report does not affect migration estimates.
 
 Execution logs are written live to `/logs/files_<timestamp>.log`, with each line flushed to disk as soon as it's logged, so the log survives crashes and force-quits. A new log file is created each time **Start scan** is clicked. The log contains detailed execution steps, phase runtimes, system resource metrics (CPU/RAM), API errors, and full tracebacks of any unhandled exceptions.
 
