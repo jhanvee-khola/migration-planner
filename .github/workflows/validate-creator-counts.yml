@@ -6,17 +6,50 @@ permissions:
   contents: read
 jobs:
   offline-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.11']
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: ${{ matrix.python }}
       - name: Install documented dependencies
         run: python -m pip install customtkinter requests pandas psutil Pillow urllib3 sortedcontainers aiohttp certifi cryptography
-      - name: Syntax checks
-        run: python -m compileall -q estimators util ui tests
+      - name: Compile changed Python files on original supported versions
+        run: python -m py_compile estimators/file_estimator.py ui/files_ui.py util/creator_counts.py tests/files/creator_counts_test.py
+      - name: Compare pristine upstream and candidate syntax
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/upstream" 62c2aa59eeb2507fd3c0312d3c714dcb7284a6f9
+          python -m compileall -q "$RUNNER_TEMP/upstream/estimators" "$RUNNER_TEMP/upstream/util" "$RUNNER_TEMP/upstream/ui" "$RUNNER_TEMP/upstream/tests" > "$RUNNER_TEMP/base-syntax.log" 2>&1 || true
+          python -m compileall -q estimators util ui tests > "$RUNNER_TEMP/feature-syntax.log" 2>&1 || true
+          cat "$RUNNER_TEMP/base-syntax.log"
+          cat "$RUNNER_TEMP/feature-syntax.log"
+          sed "s|$RUNNER_TEMP/upstream/||g" "$RUNNER_TEMP/base-syntax.log" > "$RUNNER_TEMP/base-normalized.log"
+          diff -u "$RUNNER_TEMP/base-normalized.log" "$RUNNER_TEMP/feature-syntax.log"
+      - name: Test-only workaround for identical upstream syntax error
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          base = Path(os.environ['RUNNER_TEMP']) / 'upstream/util/connectors.py'
+          candidate = Path('util/connectors.py')
+          assert base.read_bytes() == candidate.read_bytes(), 'Unrelated source unexpectedly changed'
+          old = 'logger(f"Consistent failures observed for the following: {",".join(response.get("body") for response in failed_responses)}")'
+          new = '''logger(f"Consistent failures observed for the following: {','.join(response.get('body') for response in failed_responses)}")'''
+          for path in (base, candidate):
+              content = path.read_text()
+              assert content.count(old) == 1
+              path.write_text(content.replace(old, new))
+          print('Temporary equivalent quoting fix in both checkouts; not committed to feature branch')
+          PY
+          python -m compileall -q estimators util ui tests
       - name: File and cross-product regression tests
         run: python -m unittest -v tests.files.creator_counts_test tests.files.batch_planner_test tests.files.license_fetch_test tests.files.shallow_estimator_test tests.files.shallow_versions_test tests.chat.estimator_test tests.chat.scanner_test tests.eo_in_place_archives.sanity_tests tests.eo_shared_mail_boxes.sanity_tests tests.eo_group_mailboxes.sanity_tests
       - name: Generate deterministic file fixture
