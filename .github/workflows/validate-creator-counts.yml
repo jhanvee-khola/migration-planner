@@ -12,7 +12,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
       - name: Install documented dependencies
         run: python -m pip install customtkinter requests pandas psutil Pillow urllib3 sortedcontainers aiohttp certifi cryptography
       - name: Syntax checks
@@ -25,3 +25,11 @@ jobs:
         env:
           TEST_DATA_PATH: tests/files/test_data/state_7.json
         run: python -m unittest -v tests.files.load_tests
+      - name: Deep scan simulated failures
+        env:
+          TEST_DATA_PATH: tests/files/test_data/state_7.json
+          SIMULATE_FAILURES: 'true'
+        run: python -m unittest -v tests.files.load_tests
+      - name: Traversal benchmark
+        if: always()
+        run: python -m tests.files.creator_counts_benchmark
