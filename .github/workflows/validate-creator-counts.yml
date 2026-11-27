@@ -1,0 +1,27 @@
+name: Validate deep-scan creator counts
+on:
+  push:
+    branches: ['validate/deep-scan-creator-counts']
+permissions:
+  contents: read
+jobs:
+  offline-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install documented dependencies
+        run: python -m pip install customtkinter requests pandas psutil Pillow urllib3 sortedcontainers aiohttp certifi cryptography
+      - name: Syntax checks
+        run: python -m compileall -q estimators util ui tests
+      - name: File and cross-product regression tests
+        run: python -m unittest -v tests.files.creator_counts_test tests.files.batch_planner_test tests.files.license_fetch_test tests.files.shallow_estimator_test tests.files.shallow_versions_test tests.chat.estimator_test tests.chat.scanner_test tests.eo_in_place_archives.sanity_tests tests.eo_shared_mail_boxes.sanity_tests tests.eo_group_mailboxes.sanity_tests
+      - name: Generate deterministic file fixture
+        run: python tests/files/data_state_creator.py --sites 3 --seed 7
+      - name: Deep scan load test
+        env:
+          TEST_DATA_PATH: tests/files/test_data/state_7.json
+        run: python -m unittest -v tests.files.load_tests
