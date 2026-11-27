@@ -1023,11 +1023,12 @@ class FileMigrationEstimatorTool(MigrationEstimatorTool):
               f"items with user GUIDs {coverage['items_with_user_guid']:,}; "
               f"items with resolved user emails {coverage['items_with_user_email']:,}."
           )
-          if coverage["unreported_items"]:
+          if coverage["unresolved_user_items"] or coverage["non_user_or_unknown_items"]:
             self.log_msg(
-                f"[WARNING] {coverage['unreported_items']:,} items omitted from the creator CSV: "
-                f"{coverage['unresolved_user_items']:,} with unresolved user emails; "
-                f"{coverage['non_directory_user_items']:,} without directory user IDs."
+                f"[WARNING] Creator CSV retains {coverage['unresolved_user_items']:,} "
+                "items without resolved user emails and "
+                f"{coverage['non_user_or_unknown_items']:,} non-user or unknown items "
+                "under labeled rows; combined rows may represent multiple creators."
             )
           if coverage["status"] == "partial":
             self.log_msg("[WARNING] Creator counts are incomplete; do not treat them as tenant-wide totals.")

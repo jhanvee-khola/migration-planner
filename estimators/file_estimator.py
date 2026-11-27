@@ -217,6 +217,7 @@ class FileEstimator(Estimator):
 
             collect_creators = creator_counts_enabled(self.config, data)
             creator_totals = Counter() if collect_creators else None
+            creator_metadata = {} if collect_creators else None
             counted_drives = set()
             completed_creator_drives = set()
             idx = 0
@@ -242,6 +243,7 @@ class FileEstimator(Estimator):
                         total_drives,
                         creator_counts_by_drive=batch_creators,
                         creator_completed_drives=batch_completed,
+                        creator_metadata=creator_metadata,
                     )
                     global_drive_id_to_total_size.update(batch_total_size)
 
@@ -359,14 +361,14 @@ class FileEstimator(Estimator):
                 expected_drives = {drive["id"] for drive in drives}
                 emails = resolve_creator_emails(
                     creator_totals, self._fetch_creator_directory_page,
-                    self.is_hard_stop_requested, self.logger,
+                    self.is_hard_stop_requested, self.logger, creator_metadata,
                 )
                 metrics["creatorCountReport"] = creator_report(
                     creator_totals, len(expected_drives),
                     len(completed_creator_drives),
                     bool(failures or failed or self.is_hard_stop_requested()
                          or expected_drives != completed_creator_drives),
-                    emails,
+                    emails, creator_metadata,
                 )
             return metrics
             
@@ -1608,6 +1610,7 @@ class FileEstimator(Estimator):
         total_drives_count: Optional[int] = None,
         creator_counts_by_drive: Optional[Dict[str, Counter]] = None,
         creator_completed_drives: Optional[set] = None,
+        creator_metadata: Optional[Dict] = None,
     ):
         completed_drives = cumulative_completed_drives if cumulative_completed_drives is not None else AtomicInt(0)
         self.processed_versions_count = AtomicInt(0)
@@ -1711,7 +1714,7 @@ class FileEstimator(Estimator):
                         if (creator_counts_by_drive is not None
                                 and drive_id in creator_counts_by_drive
                                 and curr_response.get("deleted") is None):
-                            creator_counts_by_drive[drive_id][(*creator_key(curr_response), "folder")] += 1
+                            creator_counts_by_drive[drive_id][(*creator_key(curr_response, creator_metadata), "folder")] += 1
                         drive_discovery_progress_metrics.increment("folderCount")
                         with self.tree_lock:
                             if res_id in folder_nodes[drive_id]:
@@ -1733,7 +1736,7 @@ class FileEstimator(Estimator):
                         if (creator_counts_by_drive is not None
                                 and drive_id in creator_counts_by_drive
                                 and curr_response.get("deleted") is None):
-                            creator_counts_by_drive[drive_id][(*creator_key(curr_response), "file")] += 1
+                            creator_counts_by_drive[drive_id][(*creator_key(curr_response, creator_metadata), "file")] += 1
                         drive_discovery_progress_metrics.increment("fileCount")
                         file_size = curr_response.get("size", 0)
                         size_in_kb = file_size / 1024
