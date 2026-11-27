@@ -1,3 +1,4 @@
+from collections import Counter
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import timedelta
 import threading
@@ -12,6 +13,7 @@ from util.utils import ScanConfig, Bucket, FileSizeDistribution, LargeResource, 
 from util.enums import FailureType, ResourceType
 from util.thread_safe_ds import ThreadSafeMap, ThreadSafeSortedSet, AtomicInt
 from util import file_encryption_detector
+from util.creator_counts import creator_key, creator_report, creator_counts_enabled, is_terminal_page
 from util.constants import ENCRYPTED_FILE_ETA_MULTIPLIER
 
 import traceback
@@ -213,6 +215,10 @@ class FileEstimator(Estimator):
 
             cumulative_completed_drives = AtomicInt(0)
 
+            collect_creators = creator_counts_enabled(self.config, data)
+            creator_totals = Counter() if collect_creators else None
+            counted_drives = set()
+            completed_creator_drives = set()
             idx = 0
             self.progress_update_callback("phase_status", source="drive_parsing", status="running")
             while idx < total_drives:
@@ -220,13 +226,22 @@ class FileEstimator(Estimator):
                 idx += batch_size
                 batch_drive_ids = [drive["id"] for drive in batch]
                 batch_parent_refs = {}
+                # Delta callbacks run on this thread, not the request workers.
+                batch_creators = (
+                    {drive_id: Counter() for drive_id in batch_drive_ids
+                     if drive_id not in counted_drives}
+                    if collect_creators else None
+                )
+                batch_completed = set() if collect_creators else None
                 try:
                     batch_adj_list, batch_parent_refs, batch_folder_nodes, batch_total_size, batch_buckets = self._create_in_memory_tree(
                         batch_drive_ids, 
                         drive_discovery_progress_metrics, 
                         failures,
                         cumulative_completed_drives,
-                        total_drives
+                        total_drives,
+                        creator_counts_by_drive=batch_creators,
+                        creator_completed_drives=batch_completed,
                     )
                     global_drive_id_to_total_size.update(batch_total_size)
 
@@ -240,6 +255,13 @@ class FileEstimator(Estimator):
                                 self._traverse_folders_for_amr(dl_id, batch_adj_list.get(dl_id, {}), batch_folder_nodes.get(dl_id, {}), amr_folders)
                                 self.drive_id_to_amr_folders[dl_id] = amr_folders
                     drive_metrics.update(batch_metrics)
+                    if batch_creators is not None and batch_folder_nodes:
+                        # Commit each observed drive only once across discovery batches.
+                        for drive_id, counts in batch_creators.items():
+                            creator_totals.update(counts)
+                            counted_drives.add(drive_id)
+                            if drive_id in batch_completed:
+                                completed_creator_drives.add(drive_id)
                     processed += len(batch)
                     success += len(batch)
 
@@ -333,6 +355,14 @@ class FileEstimator(Estimator):
             self.progress_update_callback("phase_status", source="plan_generation", status="complete")
 
             metrics["siteClassification"] = {siteId: "personal" if self._is_subsite_personal(siteId) else "teams" for siteId in metrics["siteMetrics"].keys()}
+            if creator_totals is not None:
+                expected_drives = {drive["id"] for drive in drives}
+                metrics["creatorCountReport"] = creator_report(
+                    creator_totals, len(expected_drives),
+                    len(completed_creator_drives),
+                    bool(failures or failed or self.is_hard_stop_requested()
+                         or expected_drives != completed_creator_drives),
+                )
             return metrics
             
         except Exception as e:
@@ -1537,7 +1567,9 @@ class FileEstimator(Estimator):
         drive_discovery_progress_metrics: ThreadSafeMap,
         failures: List[Dict[str, str]],
         cumulative_completed_drives: Optional[AtomicInt] = None,
-        total_drives_count: Optional[int] = None
+        total_drives_count: Optional[int] = None,
+        creator_counts_by_drive: Optional[Dict[str, Counter]] = None,
+        creator_completed_drives: Optional[set] = None,
     ):
         completed_drives = cumulative_completed_drives if cumulative_completed_drives is not None else AtomicInt(0)
         self.processed_versions_count = AtomicInt(0)
@@ -1578,6 +1610,8 @@ class FileEstimator(Estimator):
         try:
             # use delta api to fetch the folders
             delta_api = "/drives/{driveId}/root/delta?$top=1000&$select=id,parentReference,name,webUrl,folder,file,remoteItem,size"
+            if creator_counts_by_drive is not None:
+                delta_api += ",createdBy,deleted"
             batches = create_batches(delta_api, [{"driveId": drive_id} for drive_id in drive_ids], self.config.parallel_batches, True)
 
             futures_map: Dict[int, Future[List[Dict[str, Any]]]] = {}
@@ -1636,6 +1670,10 @@ class FileEstimator(Estimator):
                         continue
 
                     if "folder" in curr_response:
+                        if (creator_counts_by_drive is not None
+                                and drive_id in creator_counts_by_drive
+                                and curr_response.get("deleted") is None):
+                            creator_counts_by_drive[drive_id][(*creator_key(curr_response), "folder")] += 1
                         drive_discovery_progress_metrics.increment("folderCount")
                         with self.tree_lock:
                             if res_id in folder_nodes[drive_id]:
@@ -1654,6 +1692,10 @@ class FileEstimator(Estimator):
                             if parent_id:
                                 parent_references[drive_id][res_id] = parent_id
                     elif "file" in curr_response:
+                        if (creator_counts_by_drive is not None
+                                and drive_id in creator_counts_by_drive
+                                and curr_response.get("deleted") is None):
+                            creator_counts_by_drive[drive_id][(*creator_key(curr_response), "file")] += 1
                         drive_discovery_progress_metrics.increment("fileCount")
                         file_size = curr_response.get("size", 0)
                         size_in_kb = file_size / 1024
@@ -1702,6 +1744,9 @@ class FileEstimator(Estimator):
                         resp = batch_responses_map[req_id]
                         drive_id = req["headers"]["driveId"]
                         drive_to_resp_map[drive_id] = resp
+                        if (creator_completed_drives is not None
+                                and is_terminal_page(resp)):
+                            creator_completed_drives.add(drive_id)
 
                         if "body" in resp and "value" in resp["body"]:
                             has_next = "@odata.nextLink" in resp["body"]
@@ -1747,6 +1792,12 @@ class FileEstimator(Estimator):
                     batch_id = future_to_batch_id[future]
                     responses = future.result()
                     batch = next_batch_id_to_batch_map[batch_id]
+                    if creator_completed_drives is not None:
+                        response_map = get_batch_responses_map(responses, self.logger)
+                        for req in batch:
+                            resp = response_map.get(req["id"], {})
+                            if is_terminal_page(resp):
+                                creator_completed_drives.add(req["headers"]["driveId"])
                     new_pending_next_items.extend(
                         process_pagination_responses(
                             batch, responses, drive_to_resp_map, "driveId", GRAPH_BASE_URL,

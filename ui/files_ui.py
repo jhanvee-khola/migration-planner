@@ -1010,6 +1010,13 @@ class FileMigrationEstimatorTool(MigrationEstimatorTool):
         df_output.drop(columns=["Resource Count"], inplace=True)
       
       df_output.to_csv(report_path, index=False)
+      if "creatorCountReport" in file_metrics:
+        try:
+          from util.creator_counts import write_creator_report
+          creator_path = write_creator_report(output_dir, file_metrics["creatorCountReport"])
+          self.log_msg(f"Creator count report exported to: {creator_path}")
+        except Exception as e:
+          self.log_msg(f"[WARNING] Could not export creator count report: {e}")
       
       batches_dir = os.path.join(output_dir, "suggested_batches")
       os.makedirs(batches_dir, exist_ok=True)
