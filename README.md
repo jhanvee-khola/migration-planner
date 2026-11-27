@@ -4,6 +4,8 @@
 
 ## What's new
 
+- **Creator Counts (Scan All Sites — Deep Scan)**: Automatically generates a separate per-creator breakdown of observed files and folders across the selected OneDrive and SharePoint site types, without additional Microsoft Graph requests or directory permissions. See [Creator count reports](#creator-count-reports-scan-all-sites--deep-scan).
+
 - **Files Shallow Scan (Default Mode for OneDrive & SharePoint)**:
   - **Fast Tenant-Scale Assessment**: **Shallow Scan** is now enabled by default in the Files Planner, rapidly collecting folder counts, file counts, Document Library counts, and active corpus sizes across OneDrive and SharePoint without traversing full folder trees.
   - **Guided Certificate Setup**: On first run, the tool automatically generates a local security certificate at `certificate/<tenant_id>_<client_id>/certificate.pem` and displays a **Certificate Upload** dialog with a one-click **Copy Path** button and step-by-step upload instructions for Microsoft Entra ID.
@@ -59,6 +61,7 @@
 - [Outputs & Artifacts](#outputs--artifacts)
   - [Workflow A: Exchange Online Planner](#workflow-a-outputs-exchange-online-planner)
   - [Workflow B: Microsoft Files (OneDrive + SharePoint) Planner](#workflow-b-outputs-microsoft-onedrive--sharepoint)
+    - [Creator count reports (Scan All Sites — Deep Scan)](#creator-count-reports-scan-all-sites--deep-scan)
   - [Workflow C: Microsoft Teams & Chat Planner](#workflow-c-outputs-microsoft-teams--chat-planner)
 - [Terms & Disclaimer](#terms--disclaimer)
 
@@ -260,7 +263,7 @@ Click **"Show Advanced Settings"** to tune the performance:
 #### 1. Connect & Source Selection
 *   **Connect with Microsoft**: Enter your Tenant ID, Client ID, and Client Secret.
 *   **User Source**:
-    *   **Scan All Sites**: Scans all Personal (OneDrive) and/or SharePoint sites in the tenant.
+    *   **Scan All Sites**: Scans all Personal (OneDrive) and/or SharePoint sites in the tenant. With **Shallow Scan** switched OFF, also generates creator count reports for the selected site types.
     *   **Upload CSV**: Supports two workflows:
         1. **Targeted Entity Scan (`Entity` CSV)**: Scan a specific subset of OneDrive users (`user@domain.com`) and/or SharePoint site collection URLs (`https://...`). Only one column named `Entity` is required:
            ```csv
@@ -283,6 +286,7 @@ Click **"Show Advanced Settings"** to configure your scan mode:
     *   **Include Historical File Versions** stays available in Shallow Scan at no extra cost. For each Document Library, the corpus including versions is estimated as `TotalSize − AdditionalFileStreamSize` (never below the active size), and every version is treated as a file of the library's average size: estimated files = corpus incl. versions ÷ (`TotalFileStreamSize` ÷ `TotalFileCount`), plus a 10% buffer, rounded up. ETAs then use these values. The dashboard shows **Total Corpus Size (incl. Versions)** and an **Estimated Files (incl. Versions)** card. The site report and exported report add `Corpus Size (incl. Versions)` and `Estimated File Count (incl. Versions)` columns, while `Corpus Size` and `File Count` keep the active (current version) values. Site reports without these columns still upload: with versions ticked, the tool logs a warning and proceeds without versions.
 *   **Deep Scan (Toggle Shallow Scan OFF)**:
     *   Switch **Shallow Scan** **OFF** if you need folder depth analysis (`> depth limit 100`), shortcut counts, file size distribution buckets, Recycle Bin sizing, exact per-file Historical File Versions sizing, Encrypted File detection, or Depth Reports for Large Resources (`suggested_batches/depth_report.csv`).
+    *   **Creator Counts (Scan All Sites only)**: Select **Scan All Sites**, switch **Shallow Scan** OFF, and enable the site types you want to include. Creator counts are collected automatically during the existing item enumeration; there is no additional checkbox or directory lookup. Enable both site types to aggregate across OneDrive and SharePoint in a single scan. The extra Graph response metadata may increase transfer and parsing time. Targeted Entity Scan and ETA recalculation do not generate these reports.
     *   **Recommended Workflow**: Run **Shallow Scan** first across your tenant. If any sites, Subsites, or Document Libraries exceed 500k items, Shallow Scan automatically generates a `suggested_batches/DeepScanRecommended.csv` file in the output folder—you can then switch **Shallow Scan** OFF and upload `DeepScanRecommended.csv` to run a Deep Scan only on those large sites.
 *   **Site Types to Scan**:
     *   **Include Personal Sites (OneDrive)**: Scans Personal / OneDrive sites.
@@ -431,6 +435,27 @@ Once the scan completes, artifacts are saved under `/outputs/<timestamp>/` and c
 1.  **Site Report (`site_report_<timestamp>.csv`)**: Site-by-site breakdown of subsites, Document Libraries (`DL Count` and `Failed DL Count` in Shallow Scan), lists, folders, files, corpus size, threshold count (`>500k`), and `Suggested Batch`.
 2.  **Suggested Batch Files (`suggested_batches/`)**: Individual batch CSV files (`Batch1.csv`, `Batch2.csv`, etc.) ready for migration planning.
 3.  **Sites for Deep Scan (`suggested_batches/DeepScanRecommended.csv`)** *(Shallow Scan, when entities >500k items are detected)*: A ready-to-upload `Entity` CSV containing the URLs of sites that exceeded the 500k item threshold so you can run a targeted Deep Scan on them.
+4.  **Creator Counts (`creator_counts.csv`)** *(Scan All Sites — Deep Scan only)*: Per-creator file, folder and combined item counts.
+5.  **Creator Count Coverage (`creator_counts_coverage.json`)** *(Scan All Sites — Deep Scan only)*: Scan coverage, observed-item totals and attribution status.
+
+#### Creator count reports (Scan All Sites — Deep Scan)
+
+The two creator reports are saved automatically in `/outputs/<timestamp>/` alongside the site report when report generation is reached. They are separate from the existing site report and the UI's consolidated **Export full report** CSV. They do not affect ETA or batch calculations.
+
+`creator_counts.csv` contains the following columns (illustrative counts):
+
+| Creator Type | Creator ID | Files Created | Folders Created | Total Items Created |
+| --- | --- | ---: | ---: | ---: |
+| user | aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa | 95000 | 5000 | 100000 |
+| user | bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb | 185000 | 15000 | 200000 |
+| unresolved_user | | 12 | 3 | 15 |
+| unknown | | 5 | 1 | 6 |
+
+*   **Attribution**: Uses the creator GUID recorded in Microsoft Graph's `createdBy` metadata, rather than the site or drive owner. Counts are grouped across the selected site types. Application identities, unresolved user identities, other identity types and unknown creators are reported separately. User email addresses and tenant membership are not verified; users with missing or non-GUID IDs cannot be individually attributed.
+*   **Count scope**: Counts first-observed live, non-root drive items with file or folder facets, using the existing delta deduplication and facet precedence. Deleted items, historical versions, recycle-bin contents, standalone shortcuts and non-document-library list items are not counted. This is not an audit of all items ever created or a transactionally consistent tenant snapshot.
+*   **Coverage**: Review `creator_counts_coverage.json` before using the counts. It reports discovered and completed drive counts, observed items, items with user GUIDs, and either `partial` or `completed_no_recorded_failures`. A completed status does not guarantee discovery of inaccessible sites or full creator attribution. A failed or cancelled scan may not reach report generation. Do not treat partial counts as exact tenant-wide totals.
+*   **Performance and permissions**: Creator metadata is requested in the existing delta API projection, with no additional directory permissions or API calls. Payload size and local parsing time may increase. The existing site report format, shallow scans and targeted scans remain unchanged.
+*   **Security**: Creator GUIDs are identity metadata; store and share these local reports according to your organization's data handling policies.
 
 Execution logs are written live to `/logs/files_<timestamp>.log`, with each line flushed to disk as soon as it's logged, so the log survives crashes and force-quits. A new log file is created each time **Start scan** is clicked. The log contains detailed execution steps, phase runtimes, system resource metrics (CPU/RAM), API errors, and full tracebacks of any unhandled exceptions.
 
@@ -457,7 +482,3 @@ You can also download just the log file via the **"Export logs"** button or the 
 *   **Local Database & Storage**: To enable scan progress persistence and delta tracking, the tool creates and maintains local SQLite databases in the `data/` directory (`data/chat_migration_v2.db` and `data/scan_progress.db`). These databases store metadata, estimated item counts, and progress checkpoints entirely locally. No actual chat message contents or emails are stored. The `data/` directory can be safely deleted or purged at any time after your estimations are completed to reclaim local disk space.
 *   **License & Additional Terms**: Use of this tool is governed by the Apache 2.0 license.
 *   This is not an officially supported Google product. This project is not eligible for the [Google Open Source Software Vulnerability Rewards Program](https://bughunters.google.com/open-source-security).
-
-### Creator counts (Scan All Sites — Deep Scan)
-
-Deep scans of all selected site types additionally export `creator_counts.csv` and `creator_counts_coverage.json` alongside the site report. Counts are grouped by the recorded Graph creator GUID, not the drive owner. Live, non-root files and folders are counted once using the existing delta deduplication; historical versions, deleted items and standalone shortcuts are excluded. Application and unresolved identities are reported separately. No new directory lookup permissions or API requests are required. Tenant membership and creator email addresses are not verified. Counts describe observed items, not a historical creation audit; check the coverage file for failures or cancellation and do not treat a partial result as tenant-wide. The added Graph response fields may increase transfer and parsing time. Shallow scans, targeted scans and CSV-based ETA recalculation are unchanged.
