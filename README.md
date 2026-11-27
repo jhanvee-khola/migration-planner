@@ -434,7 +434,7 @@ Once the scan completes, artifacts are saved under `/outputs/<timestamp>/` and c
 1.  **Site Report (`site_report_<timestamp>.csv`)**: Site-by-site breakdown of subsites, Document Libraries (`DL Count` and `Failed DL Count` in Shallow Scan), lists, folders, files, corpus size, threshold count (`>500k`), and `Suggested Batch`.
 2.  **Suggested Batch Files (`suggested_batches/`)**: Individual batch CSV files (`Batch1.csv`, `Batch2.csv`, etc.) ready for migration planning.
 3.  **Sites for Deep Scan (`suggested_batches/DeepScanRecommended.csv`)** *(Shallow Scan, when entities >500k items are detected)*: A ready-to-upload `Entity` CSV containing the URLs of sites that exceeded the 500k item threshold so you can run a targeted Deep Scan on them.
-4.  **Creator Counts (`creator_counts_<timestamp>.csv`)** *(Scan All Sites — Deep Scan only)*: User email, file count, folder count and total item count across the selected site types. Items without a distinguishable creator and non-user items are retained in clearly labeled combined rows (not individual users).
+4.  **Creator Counts (`creator_counts_<timestamp>.csv`)** *(Scan All Sites — Deep Scan only)*: User email, file count, folder count and total item count across the selected site types.
 
 Execution logs are written live to `/logs/files_<timestamp>.log`, with each line flushed to disk as soon as it's logged, so the log survives crashes and force-quits. A new log file is created each time **Start scan** is clicked. The log contains detailed execution steps, phase runtimes, system resource metrics (CPU/RAM), API errors, and full tracebacks of any unhandled exceptions.
 
